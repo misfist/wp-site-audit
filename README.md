@@ -109,7 +109,7 @@ These are set at the top of the script and can be extended:
 
 ### Uploads Directories
 
-The uploads check searches every directory named `uploads` in the site, plus the directory WordPress reports through `wp_upload_dir()`. That covers a custom directory set with the `upload_path` option or the `UPLOADS` constant. A directory set by a plugin filter isn't seen, since plugins aren't loaded.
+The uploads check searches `wp-content/uploads`, plus the directory WordPress reports through `wp_upload_dir()` if it's somewhere else. Other directories named `uploads`, such as inside a plugin's code, aren't searched. That covers a custom directory set with the `upload_path` option or the `UPLOADS` constant. A directory set by a plugin filter isn't seen, since plugins aren't loaded.
 
 ## Client Report
 

@@ -679,8 +679,9 @@ get_uploads_directory() {
 #######################################
 # Lists executable PHP files inside uploads directories.
 #
-# Searches any directory named uploads within the site, plus the uploads
-# directory WordPress is configured to use, if it is elsewhere.
+# Searches wp-content/uploads, plus the uploads directory WordPress is
+# configured to use, if it is elsewhere. Other directories named uploads,
+# such as inside plugin code, are not searched.
 # Placeholder index.php files (see PLACEHOLDER_LINE_PATTERN) are counted in
 # the report but not listed or flagged.
 # Returns:
@@ -689,6 +690,7 @@ get_uploads_directory() {
 check_upload_scripts() {
 	local uploads_directory
 	local configured_root=''
+	local upload_roots
 	local listing
 	local contents
 	local suspicious_index_files
@@ -704,8 +706,12 @@ check_upload_scripts() {
 		configured_root="$(printf '%q' "$uploads_directory")"
 	fi
 
-	listing="$(run_remote "{ find ${site_path} -type f -path '*/uploads/*' \\( -iname '*.php' -o -iname '*.php[0-9]' -o -iname '*.phtml' -o -iname '*.phar' \\) -printf '%s\\t%p\\n'; ${configured_root:+find ${configured_root} -type f \\( -iname '*.php' -o -iname '*.php[0-9]' -o -iname '*.phtml' -o -iname '*.phar' \\) -printf '%s\\t%p\\n';} } | sort -u")"
-	contents="$(run_remote "{ find ${site_path} -type f -path '*/uploads/*' -name index.php -size -$(( PLACEHOLDER_MAX_BYTES + 1 ))c -exec grep -H '' {} +; ${configured_root:+find ${configured_root} -type f -name index.php -size -$(( PLACEHOLDER_MAX_BYTES + 1 ))c -exec grep -H '' {} +;} } | sort -u")"
+	# The default uploads directory, plus the configured one if it differs.
+	# Directories that don't exist are skipped.
+	upload_roots="${site_path}/wp-content/uploads${configured_root:+ ${configured_root}}"
+
+	listing="$(run_remote "for root in ${upload_roots}; do [ -d \"\$root\" ] && find \"\$root\" -type f \\( -iname '*.php' -o -iname '*.php[0-9]' -o -iname '*.phtml' -o -iname '*.phar' \\) -printf '%s\\t%p\\n'; done | sort -u")"
+	contents="$(run_remote "for root in ${upload_roots}; do [ -d \"\$root\" ] && find \"\$root\" -type f -name index.php -size -$(( PLACEHOLDER_MAX_BYTES + 1 ))c -exec grep -H '' {} +; done | sort -u")"
 	suspicious_index_files="$(list_non_placeholder_files "$contents")"
 
 	while IFS= read -r line; do
