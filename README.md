@@ -90,7 +90,7 @@ A site's status is the most severe result of any of its checks.
 | PHP versions installed | No | Information only |
 | Core checksums | No | `FLAG` on modified, missing or extra core files; `REVIEW` if verification couldn't run |
 | Plugin checksums | No | `FLAG` on modified, added or missing files in wordpress.org plugins |
-| Modified files | Yes | `REVIEW` on PHP, `.htaccess` and `.user.ini` files changed since `--since` |
+| Modified files | Yes | `REVIEW` on PHP, `.htaccess` and `.user.ini` files changed since `--since`. Files in core or wordpress.org plugins that passed their checksum check are left out |
 | `wp-config.php` | Yes | `FLAG` on `eval(`, `base64_decode(`, `gzinflate(`, `str_rot13(` or `assert(`; `REVIEW` on includes other than `wp-settings.php` |
 | Scripts in uploads | No | `FLAG` on any PHP file in an uploads directory |
 | Prepend directives | No | `REVIEW` on `auto_prepend_file` or `auto_append_file` |
@@ -171,7 +171,7 @@ The gateway also strips quotes and backslashes from commands. The script works a
 
 ## Reinstalling Flagged Plugins
 
-When the plugin checksum check flags wordpress.org plugins, this reinstalls each of them from wordpress.org at the version already installed. Run it on the server, from the WordPress directory:
+This reinstalls only the wordpress.org plugins that fail their checksum check, at the version already installed. Plugins that pass are left alone. Run it on the server, from the WordPress directory:
 
 ```
 wp plugin verify-checksums --all --format=csv 2>/dev/null \
@@ -181,11 +181,11 @@ wp plugin verify-checksums --all --format=csv 2>/dev/null \
 	done
 ```
 
-- The first line lists only plugins with mismatches. Warnings about premium plugins, which have no published checksums, are discarded
+- The first line outputs a row only for each file that fails, so plugins that pass never reach the loop. Warnings about premium plugins, which have no published checksums, are discarded
 - `awk` and `sort -u` reduce the list to one slug per plugin
 - `--version` keeps the installed version. Leave it out to update each plugin to the latest version instead
 
-A reinstall overwrites the plugin's files but doesn't delete files that aren't part of it. Run the audit again afterwards: the reinstalled plugins will show up in the modified-files check with the current date, and their checksums should now pass.
+A reinstall overwrites the plugin's files but doesn't delete files that aren't part of it. Run the audit again afterwards: the reinstalled plugins' checksums should now pass, and their files are then left out of the modified-files check even though they have the current date.
 
 ## Limitations
 

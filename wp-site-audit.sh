@@ -41,6 +41,12 @@ site_status=0
 site_url=''
 site_php_version=''
 site_php_state=''
+site_raw_path=''
+
+# Set by the checksum checks for check_modified_files(): whether core
+# verified, and the slugs of wordpress.org plugins that verified.
+core_verified=0
+verified_plugins=''
 
 # Result of each check for the current site, in the order run. Parallel
 # arrays rather than an associative array, for Bash 3.2 on macOS.
@@ -139,7 +145,7 @@ parse_arguments() {
 # Builds the default report directory name from the sites file name, the
 # --site label if given, and the current time, e.g.
 # site-audit-dreamhost-20261023-1720 or
-# site-audit-siteground-example-com-20261023-1720.
+# site-audit-siteground-coreyrobin-20261023-1720.
 #
 # The file name is left out when the sites file is not a regular file, such
 # as when it is passed with process substitution.
@@ -448,23 +454,46 @@ check_core_checksums() {
 		return "$STATUS_REVIEW"
 	fi
 
+	core_verified=1
+
 	return "$STATUS_OK"
 }
 
 #######################################
-# Verifies wordpress.org plugins against the official checksums.
+# Verifies wordpress.org plugins against the official checksums, and
+# records which plugins verified for check_modified_files().
 #
-# Plugins not hosted on wordpress.org are skipped by WP-CLI; changes to them
-# are caught by check_modified_files().
+# A plugin counts as verified when it is installed, has no failing files,
+# and was not skipped. Plugins not hosted on wordpress.org are skipped by
+# WP-CLI; changes to them are caught by check_modified_files().
+# Globals:
+#   verified_plugins
 # Returns:
 #   STATUS_FLAG if any file was changed, added, or removed, otherwise
 #   STATUS_OK.
 #######################################
 check_plugin_checksums() {
 	local output
+	local installed_plugins
+	local unverified_plugins
 
 	output="$(run_wp plugin verify-checksums --all)"
 	append_section 'Plugin checksums' "$output"
+
+	installed_plugins="$(run_wp plugin list --field=name | grep -E '^[A-Za-z0-9._-]+$' | sort -u)"
+	unverified_plugins="$(
+		{
+			awk -F'\t' 'NF >= 3 && $1 != "plugin_name" { print $1 }' <<< "$output"
+			grep -oE 'of plugin [^,]+, skipping' <<< "$output" | sed -E 's/^of plugin (.+), skipping$/\1/'
+		} | sort -u
+	)"
+
+	# If verification failed outright, no plugin counts as verified.
+	if grep -q '^Error:' <<< "$output" && ! grep -qE 'Only verified|plugin_name' <<< "$output"; then
+		verified_plugins=''
+	else
+		verified_plugins="$(comm -23 <(echo "$installed_plugins") <(echo "$unverified_plugins"))"
+	fi
 
 	if grep -qE 'Checksum does not match|File was added|File is missing' <<< "$output"; then
 		return "$STATUS_FLAG"
@@ -474,19 +503,88 @@ check_plugin_checksums() {
 }
 
 #######################################
+# Prints whether a file is covered by a checksum check that passed.
+# Globals:
+#   site_raw_path
+#   core_verified
+#   verified_plugins
+# Arguments:
+#   Absolute path of the file on the server.
+# Returns:
+#   0 if the file is in verified core or a verified plugin, otherwise 1.
+#######################################
+is_checksum_verified() {
+	local relative_path="${1#"${site_raw_path%/}"/}"
+	local plugin_slug
+
+	if (( core_verified )); then
+		if [[ $relative_path == wp-admin/* || $relative_path == wp-includes/* ]]; then
+			return 0
+		fi
+
+		# Core files in the WordPress root. The slash check matters: in a
+		# pattern, * also matches "/", so wp-*.php alone would match
+		# everything under wp-content.
+		if [[ $relative_path != */* && $relative_path != 'wp-config.php' ]] \
+			&& [[ $relative_path == 'index.php' || $relative_path == 'xmlrpc.php' || $relative_path == wp-*.php ]]; then
+			return 0
+		fi
+	fi
+
+	if [[ $relative_path == wp-content/plugins/*/* ]]; then
+		plugin_slug="${relative_path#wp-content/plugins/}"
+		plugin_slug="${plugin_slug%%/*}"
+
+		if grep -qxF "$plugin_slug" <<< "$verified_plugins"; then
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+#######################################
 # Lists PHP and server configuration files modified since the start date.
+#
+# Files in core or in wordpress.org plugins that passed their checksum check
+# are left out, since they are identical to the official release whatever
+# their date. The number left out is noted in the report.
 # Globals:
 #   since_date
 # Returns:
-#   STATUS_REVIEW if any files were modified, otherwise STATUS_OK.
+#   STATUS_REVIEW if any other files were modified, otherwise STATUS_OK.
 #######################################
 check_modified_files() {
 	local output
+	local line
+	local file
+	local findings=''
+	local omitted_count=0
 
 	output="$(run_remote "find ${site_path} -type f \\( -name '*.php' -o -name '.htaccess' -o -name '.user.ini' \\) -newermt ${since_date} -not -path '*/cache/*' -printf '%TY-%Tm-%Td %TH:%TM  %p\\n' | sort")"
-	append_section "Files modified since ${since_date}" "$output"
 
-	if [[ -n "$output" ]]; then
+	while IFS= read -r line; do
+		if [[ -z "$line" ]]; then
+			continue
+		fi
+
+		file="${line#*  }"
+
+		if [[ $line == *'  /'* ]] && is_checksum_verified "$file"; then
+			omitted_count=$(( omitted_count + 1 ))
+			continue
+		fi
+
+		findings+="${line}"$'\n'
+	done <<< "$output"
+
+	append_section "Files modified since ${since_date}" "${findings%$'\n'}"
+
+	if (( omitted_count > 0 )); then
+		printf '\n%d file(s) in checksum-verified core and plugins left out.\n' "$omitted_count" >> "$site_report"
+	fi
+
+	if [[ -n "$findings" ]]; then
 		return "$STATUS_REVIEW"
 	fi
 
@@ -770,6 +868,9 @@ audit_site() {
 	site_url="$label"
 	site_php_version=''
 	site_php_state=''
+	site_raw_path="$path"
+	core_verified=0
+	verified_plugins=''
 	check_keys=()
 	check_statuses=()
 
