@@ -342,8 +342,6 @@ write_client_report() {
 		else
 			printf '**[Write the summary: what was found and what, if anything, needs to be done. Update the results above.]**\n'
 		fi
-
-		printf '\n~/P.E.A.\n'
 	} > "$client_report"
 }
 
