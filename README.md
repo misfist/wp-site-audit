@@ -55,8 +55,8 @@ Lines starting with `#` and blank lines are skipped.
 
 ```
 # Clients
-example-com    sg-example    /home/customer/www/example.com/public_html
-example       dh-example       /home/example/example.org  /home/example/logs/example.org/https/error.log
+example-com   sg-example       /home/customer/www/example.com/public_html
+example-org   dh-example       /home/example/example.org  /home/example/logs/example.org/https/error.log
 ```
 
 ## Output
@@ -168,6 +168,24 @@ wait
 ```
 
 The gateway also strips quotes and backslashes from commands. The script works around this by sending every command base64-encoded and decoding it on the server.
+
+## Reinstalling Flagged Plugins
+
+When the plugin checksum check flags wordpress.org plugins, this reinstalls each of them from wordpress.org at the version already installed. Run it on the server, from the WordPress directory:
+
+```
+wp plugin verify-checksums --all --format=csv 2>/dev/null \
+	| awk -F, 'NR > 1 { print $1 }' | sort -u \
+	| while read -r plugin; do
+		wp plugin install "$plugin" --force --version="$(wp plugin get "$plugin" --field=version)"
+	done
+```
+
+- The first line lists only plugins with mismatches. Warnings about premium plugins, which have no published checksums, are discarded
+- `awk` and `sort -u` reduce the list to one slug per plugin
+- `--version` keeps the installed version. Leave it out to update each plugin to the latest version instead
+
+A reinstall overwrites the plugin's files but doesn't delete files that aren't part of it. Run the audit again afterwards: the reinstalled plugins will show up in the modified-files check with the current date, and their checksums should now pass.
 
 ## Limitations
 
